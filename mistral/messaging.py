@@ -25,7 +25,6 @@ import oslo_messaging
 from oslo_messaging.notify import dispatcher
 from oslo_messaging.notify import listener
 from oslo_messaging import target
-from oslo_messaging import transport
 from oslo_utils import timeutils
 
 LOG = logging.getLogger(__name__)
@@ -100,7 +99,13 @@ def get_pool_name(exchange):
 
 def start_listener(conf, exchange, topic, endpoints):
     """Starts up a notification listener."""
-    trans = transport.get_transport(conf)
+    # NOTE(fivetime): This must be the *notification* transport. The
+    # deprecated transport.get_transport() used here before reads the RPC
+    # transport_url from [DEFAULT], so when notifications are routed to a
+    # separate bus via [oslo_messaging_notifications] transport_url (e.g.
+    # RabbitMQ for RPC + Kafka for notifications), event triggers silently
+    # listen on the wrong bus and never receive any events.
+    trans = oslo_messaging.get_notification_transport(conf)
     targets = [target.Target(exchange=exchange, topic=topic)]
     pool_name = get_pool_name(exchange)
 
