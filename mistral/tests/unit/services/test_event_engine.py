@@ -156,6 +156,55 @@ class EventEngineTest(base.DbTestCase):
 
     @mock.patch('mistral.messaging.start_listener')
     @mock.patch.object(rpc, 'get_engine_client', mock.Mock())
+    def test_event_queue_loop_waits_while_idle(self, mock_start):
+        """An idle engine must wait on the queue instead of polling it.
+
+            _loop() used to call get_nowait(), so an empty queue raised
+            immediately, the except swallowed it and the loop went straight
+            round again with nothing to wait on. That pins a CPU core for as
+            long as the service is up, whether or not any event trigger
+            exists.
+
+            Queue.get_nowait() is implemented as get(block=False), so
+            counting calls to get() catches both spellings.
+        """
+        e_engine = evt_eng.DefaultEventEngine()
+
+        gets = []
+        real_get = e_engine.event_queue.get
+
+        def counting_get(*args, **kwargs):
+            gets.append(kwargs.get('timeout'))
+            return real_get(*args, **kwargs)
+
+        e_engine.event_queue.get = counting_get
+
+        e_engine.start()
+        self.addCleanup(e_engine.stop)
+
+        idle = 0.5
+        time.sleep(idle)
+
+        # Waiting on the queue wakes at most once per timeout. Polling would
+        # be several orders of magnitude above that.
+        max_expected = idle / evt_eng.DefaultEventEngine._QUEUE_POLL_TIMEOUT + 2
+
+        self.assertLessEqual(
+            len(gets),
+            max_expected,
+            'event queue polled %d times in %.1fs -- the loop is not '
+            'waiting on the queue' % (len(gets), idle)
+        )
+
+        # A get() without a timeout does not wait, so every call has to carry
+        # one for the loop to be idle-cheap.
+        self.assertTrue(
+            all(t for t in gets),
+            'event queue read without a timeout: %r' % (gets,)
+        )
+
+    @mock.patch('mistral.messaging.start_listener')
+    @mock.patch.object(rpc, 'get_engine_client', mock.Mock())
     def test_process_event_queue(self, mock_start):
         EVENT_TRIGGER['project_id'] = self.ctx.project_id
         db_api.create_event_trigger(EVENT_TRIGGER)
