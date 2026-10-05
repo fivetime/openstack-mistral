@@ -25,7 +25,6 @@ import oslo_messaging
 from oslo_messaging.notify import dispatcher
 from oslo_messaging.notify import listener
 from oslo_messaging import target
-from oslo_messaging import transport
 from oslo_utils import timeutils
 
 LOG = logging.getLogger(__name__)
@@ -100,7 +99,13 @@ def get_pool_name(exchange):
 
 def start_listener(conf, exchange, topic, endpoints):
     """Starts up a notification listener."""
-    trans = transport.get_transport(conf)
+    # NOTE(fivetime): this has to be the notification transport, not the RPC
+    # one. Notifications can be routed to a bus of their own through
+    # [oslo_messaging_notifications] transport_url, and nothing publishes
+    # the events we listen for on the RPC bus from [DEFAULT]. When no
+    # separate bus is configured get_notification_transport() falls back to
+    # the [DEFAULT] transport_url, so a single-bus deployment is unaffected.
+    trans = oslo_messaging.get_notification_transport(conf)
     targets = [target.Target(exchange=exchange, topic=topic)]
     pool_name = get_pool_name(exchange)
 
