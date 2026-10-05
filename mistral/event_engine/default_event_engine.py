@@ -135,6 +135,11 @@ class DefaultEventEngine(base.EventEngine):
     A separate service that is responsible for listening event notification
     and triggering workflows defined by end user.
     """
+    # Seconds _loop() waits on the queue before re-checking _stopped. Small
+    # enough that shutdown stays prompt, large enough that an idle engine
+    # costs nothing.
+    _QUEUE_POLL_TIMEOUT = 1
+
     def __init__(self):
         self.engine_client = rpc.get_engine_client()
         self.event_queue = queue.Queue()
@@ -296,11 +301,13 @@ class DefaultEventEngine(base.EventEngine):
         """
         while not self._stopped:
             try:
-                # Get from queue (nowait)
-                # It may raise a queue.Empty if there is nothing in queue
-                # but thanks to while loop we will continue getting until
-                # the thread got stopped.
-                event = self.event_queue.get_nowait()
+                # Block until an event shows up rather than polling: with
+                # get_nowait() an empty queue raises immediately, the except
+                # below swallows it and the loop runs again with nothing to
+                # wait on, which pins a CPU core for as long as the service
+                # is up. The timeout keeps _stopped honoured, so stop() still
+                # joins this thread within a second.
+                event = self.event_queue.get(timeout=self._QUEUE_POLL_TIMEOUT)
                 context = event.get('context')
                 event_type = event.get('event_type')
 
